@@ -39,9 +39,10 @@ func (s *Service) coquiSpeak(ctx context.Context, text, outPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
+	// Use better voice model for tech content
 	cmd := exec.CommandContext(ctx, "tts",
 		"--text", text,
-		"--model_name", s.config.CoquiModel,
+		"--model_name", "tts_models/en/ljspeech/tacotron2-DDC",
 		"--out_path", outPath,
 	)
 	return cmd.Run()

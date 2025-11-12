@@ -70,6 +70,12 @@ STYLE GUIDELINES:
 - Create urgency and excitement about AI developments
 - Include transition phrases like "But here's the thing..." or "What's even crazier..."
 
+IMPORTANT: Return ONLY the actual script text that will be spoken. Do NOT include:
+- Title headers
+- Section labels like "(Hook)" or "(Main Content)" or "(CTA)"
+- Any formatting or commentary
+- Just the pure spoken script text
+
 OUTPUT: Return ONLY the script text, no additional formatting or commentary.`, 
 		s.config.ChannelName, topic)
 }

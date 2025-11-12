@@ -77,17 +77,20 @@ func main() {
 	}
 	log.Success("Narration synthesized")
 
-	// Step 3: Create background video
-	log.Info("Step 3/5: Creating background...")
+	// Step 3: Create dynamic background video
+	log.Info("Step 3/5: Creating dynamic background...")
 	backgroundPath := "build/background.mp4"
 	duration := 65 * time.Second
 	if *test {
 		duration = 10 * time.Second // Faster for testing
 	}
 	
-	if err := mediaService.CreateBackground(ctx, backgroundPath, duration); err != nil {
-		log.Error("Background creation failed: %v", err)
-		os.Exit(1)
+	if err := mediaService.CreateDynamicBackground(ctx, script, backgroundPath, duration); err != nil {
+		log.Warning("Dynamic background failed, using static: %v", err)
+		if err := mediaService.CreateBackground(ctx, backgroundPath, duration); err != nil {
+			log.Error("Background creation failed: %v", err)
+			os.Exit(1)
+		}
 	}
 	log.Success("Background created")
 
@@ -109,10 +112,19 @@ func main() {
 		Output:      *output,
 	}
 
-	// Add logo if exists
-	if _, err := os.Stat("assets/logos/logo.png"); err == nil {
-		renderCfg.Logo = "assets/logos/logo.png"
-		log.Info("Using logo overlay")
+	// Add logo if exists (check multiple formats and locations)
+	logoFiles := []string{
+		"assets/logos/logo.png",
+		"assets/logos/logo.jpg", 
+		"assets/logos/main_logo.png",
+		"assets/banners/channel_logo.png",
+	}
+	for _, logoFile := range logoFiles {
+		if _, err := os.Stat(logoFile); err == nil {
+			renderCfg.Logo = logoFile
+			log.Info("Using logo: %s", logoFile)
+			break
+		}
 	}
 
 	// Add music if exists

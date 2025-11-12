@@ -34,20 +34,40 @@ func NewService(cfg *config.Config, log *logger.Logger) *Service {
 	}
 }
 
-// CreateBackground creates a simple solid color background (much faster)
+// CreateBackground creates background video from images or generates one
 func (s *Service) CreateBackground(ctx context.Context, outPath string, duration time.Duration) error {
-	s.logger.Info("Creating simple background (%v duration)", duration)
+	s.logger.Info("Creating background (%v duration)", duration)
 
 	sec := int(duration.Seconds())
 	
-	// Simple gradient background - much faster than Game of Life
+	// Check for background images first
+	imageFiles := []string{
+		"assets/images/tech1.jpg",
+		"assets/images/tech2.jpg", 
+		"assets/images/tech3.jpg",
+	}
+	
+	// Use images if available
+	for _, img := range imageFiles {
+		if _, err := os.Stat(img); err == nil {
+			s.logger.Info("Using background image: %s", img)
+			cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
+				"-loop", "1", "-i", img,
+				"-t", fmt.Sprintf("%d", sec),
+				"-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0015,1.5)':d=125",
+				"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+				outPath,
+			)
+			return cmd.Run()
+		}
+	}
+	
+	// Fallback to simple gradient
+	s.logger.Info("No images found, creating simple gradient")
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-f", "lavfi", "-t", fmt.Sprintf("%d", sec),
-		"-i", "color=c=#1a1a2e:s=1080x1920",
-		"-f", "lavfi", "-t", fmt.Sprintf("%d", sec),
-		"-i", "color=c=#16213e:s=1080x1920",
-		"-filter_complex", "[0][1]blend=all_mode=overlay:all_opacity=0.5",
-		"-c:v", "libx264", "-preset", "ultrafast",
+		"-i", "color=c=#0f0f23:s=1080x1920",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
 		outPath,
 	)
 	
@@ -62,18 +82,31 @@ func (s *Service) GenerateSubtitles(audioPath, script, outPath string) error {
 		return err
 	}
 
-	sentences := s.splitSentences(script)
-	if len(sentences) == 0 {
-		sentences = []string{strings.TrimSpace(script)}
+	// Clean script and split by words for better sync
+	cleanScript := strings.ReplaceAll(script, `"`, "")
+	words := strings.Fields(cleanScript)
+	if len(words) == 0 {
+		return fmt.Errorf("no words found in script")
 	}
 
-	segmentDuration := dur / time.Duration(len(sentences))
+	// Group words for better readability (3-5 words per subtitle)
+	var groups []string
+	wordsPerGroup := 4
+	for i := 0; i < len(words); i += wordsPerGroup {
+		end := i + wordsPerGroup
+		if end > len(words) {
+			end = len(words)
+		}
+		groups = append(groups, strings.Join(words[i:end], " "))
+	}
+
+	segmentDuration := dur / time.Duration(len(groups))
 	var srt strings.Builder
 	currentTime := time.Duration(0)
 
-	for i, sentence := range sentences {
+	for i, group := range groups {
 		nextTime := currentTime + segmentDuration
-		if i == len(sentences)-1 {
+		if i == len(groups)-1 {
 			nextTime = dur
 		}
 
@@ -81,7 +114,7 @@ func (s *Service) GenerateSubtitles(audioPath, script, outPath string) error {
 			i+1,
 			s.formatSRTTime(currentTime),
 			s.formatSRTTime(nextTime),
-			strings.TrimSpace(sentence),
+			strings.TrimSpace(group),
 		)
 		currentTime = nextTime
 	}
@@ -92,55 +125,56 @@ func (s *Service) GenerateSubtitles(audioPath, script, outPath string) error {
 func (s *Service) RenderVideo(ctx context.Context, cfg RenderConfig) error {
 	s.logger.Info("Rendering final video")
 
-	args := []string{"-y"}
-	
-	// Add video inputs
-	for _, v := range cfg.VideoInputs {
-		args = append(args, "-stream_loop", "-1", "-t", "65", "-i", v)
-	}
-	
-	// Add narration
-	args = append(args, "-i", cfg.Narration)
-	
-	// Add music if provided
-	if cfg.Music != "" {
-		args = append(args, "-i", cfg.Music)
-	}
-	
-	// Add logo if provided
-	if cfg.Logo != "" {
-		args = append(args, "-i", cfg.Logo)
-	}
-
-	// Build filter complex
-	var fc strings.Builder
-	fmt.Fprintf(&fc, "[0:v]scale=%d:%d,setsar=1:1,format=yuv420p[v0];", s.config.VideoWidth, s.config.VideoHeight)
-	
-	if cfg.Music != "" {
-		fc.WriteString("[2:a]aformat=fltp:44100:stereo,volume=0.5[music];[1:a]anull[narr];")
-		fc.WriteString("[music][narr]sidechaincompress=threshold=0.12:ratio=10:attack=5:release=200[aout];")
-	} else {
-		fc.WriteString("[1:a]anull[aout];")
-	}
-	
-	if cfg.Logo != "" {
-		fmt.Fprintf(&fc, "[v0][3]overlay=W-w-%d:H-h-%d:format=auto[vout];", s.config.LogoMargin, s.config.LogoMargin)
-	} else {
-		fc.WriteString("[v0]null[vout];")
-	}
-
-	args = append(args,
-		"-filter_complex", fc.String(),
-		"-map", "[vout]", "-map", "[aout]",
-		"-c:v", "libx264", "-preset", "ultrafast", "-crf", fmt.Sprintf("%d", s.config.VideoCRF),
-		"-c:a", "aac", "-b:a", "128k",
-		"-shortest",
+	// Step 1: Add subtitles to video
+	tempVideo := "build/temp_with_subs.mp4"
+	cmd1 := exec.CommandContext(ctx, "ffmpeg", "-y",
+		"-i", cfg.VideoInputs[0],
 		"-vf", fmt.Sprintf("subtitles=%s", cfg.CaptionsSRT),
-		cfg.Output,
+		"-c:v", "libx264", "-preset", "fast", "-crf", "20",
+		tempVideo,
 	)
+	if err := cmd1.Run(); err != nil {
+		return err
+	}
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	return cmd.Run()
+	// Step 2: Add logo if available
+	videoWithLogo := tempVideo
+	if cfg.Logo != "" {
+		videoWithLogo = "build/temp_with_logo.mp4"
+		cmd2 := exec.CommandContext(ctx, "ffmpeg", "-y",
+			"-i", tempVideo,
+			"-i", cfg.Logo,
+			"-filter_complex", "[0:v][1:v]overlay=W-w-20:20",
+			"-c:v", "libx264", "-preset", "fast", "-crf", "20",
+			videoWithLogo,
+		)
+		if err := cmd2.Run(); err != nil {
+			return err
+		}
+	}
+
+	// Step 3: Add audio
+	args := []string{"-y",
+		"-i", videoWithLogo,
+		"-i", cfg.Narration,
+	}
+	
+	if cfg.Music != "" {
+		args = append(args, "-i", cfg.Music,
+			"-filter_complex", "[1:a]volume=5.0[narr];[2:a]volume=1.0[music];[narr][music]amix=inputs=2:duration=first",
+			"-c:a", "aac", "-b:a", "192k",
+		)
+	} else {
+		args = append(args,
+			"-c:a", "aac", "-b:a", "192k",
+			"-filter:a", "volume=5.0",
+		)
+	}
+	
+	args = append(args, "-c:v", "copy", "-shortest", cfg.Output)
+	
+	cmd3 := exec.CommandContext(ctx, "ffmpeg", args...)
+	return cmd3.Run()
 }
 
 func (s *Service) getAudioDuration(path string) (time.Duration, error) {
