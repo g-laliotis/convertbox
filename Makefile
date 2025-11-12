@@ -1,4 +1,4 @@
-.PHONY: build run demo clean install deps
+.PHONY: build run demo test clean install deps
 
 # Build the application
 build:
@@ -8,11 +8,19 @@ build:
 run:
 	go run ./cmd/convertbox --topic "$(TOPIC)"
 
+# Quick test with short video
+test:
+	go run ./cmd/convertbox --topic "Quick Test" --test
+
 # Demo with sample topic
 demo:
 	@echo "🚀 Running Convertbox demo..."
 	@ollama pull mistral || echo "⚠️  Ollama not available, continuing..."
 	@$(MAKE) run TOPIC="5 Hidden AI Websites That Will Blow Your Mind in 2025"
+
+# Run Go tests
+test-go:
+	go test ./...
 
 # Install dependencies
 deps:

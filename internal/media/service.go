@@ -34,24 +34,23 @@ func NewService(cfg *config.Config, log *logger.Logger) *Service {
 	}
 }
 
+// CreateBackground creates a simple solid color background (much faster)
 func (s *Service) CreateBackground(ctx context.Context, outPath string, duration time.Duration) error {
-	s.logger.Info("Creating animated background (%v duration)", duration)
+	s.logger.Info("Creating simple background (%v duration)", duration)
 
 	sec := int(duration.Seconds())
-	filter := fmt.Sprintf(
-		"life=s=%dx%d:mold=10:ratio=0.08:seed=42,format=yuv420p,eq=contrast=1.2:brightness=0.03,boxblur=2",
-		s.config.VideoWidth, s.config.VideoHeight,
-	)
-
+	
+	// Simple gradient background - much faster than Game of Life
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-f", "lavfi", "-t", fmt.Sprintf("%d", sec),
-		"-i", "color=c=black:s=1920x1080",
+		"-i", "color=c=#1a1a2e:s=1080x1920",
 		"-f", "lavfi", "-t", fmt.Sprintf("%d", sec),
-		"-i", "nullsrc=s=1920x1080",
-		"-filter_complex", filter,
-		"-s", fmt.Sprintf("%dx%d", s.config.VideoWidth, s.config.VideoHeight),
+		"-i", "color=c=#16213e:s=1080x1920",
+		"-filter_complex", "[0][1]blend=all_mode=overlay:all_opacity=0.5",
+		"-c:v", "libx264", "-preset", "ultrafast",
 		outPath,
 	)
+	
 	return cmd.Run()
 }
 
@@ -133,8 +132,8 @@ func (s *Service) RenderVideo(ctx context.Context, cfg RenderConfig) error {
 	args = append(args,
 		"-filter_complex", fc.String(),
 		"-map", "[vout]", "-map", "[aout]",
-		"-c:v", "libx264", "-preset", s.config.VideoPreset, "-crf", fmt.Sprintf("%d", s.config.VideoCRF),
-		"-c:a", "aac", "-b:a", "192k",
+		"-c:v", "libx264", "-preset", "ultrafast", "-crf", fmt.Sprintf("%d", s.config.VideoCRF),
+		"-c:a", "aac", "-b:a", "128k",
 		"-shortest",
 		"-vf", fmt.Sprintf("subtitles=%s", cfg.CaptionsSRT),
 		cfg.Output,

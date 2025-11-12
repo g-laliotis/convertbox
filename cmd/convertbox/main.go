@@ -24,6 +24,7 @@ func main() {
 	// Parse command line flags
 	topic := flag.String("topic", "", "Video topic/title (required)")
 	output := flag.String("out", "build/final.mp4", "Output video path")
+	test := flag.Bool("test", false, "Run quick test mode")
 	flag.Parse()
 
 	if *topic == "" {
@@ -52,7 +53,8 @@ func main() {
 	ttsService := tts.NewService(cfg, log)
 	mediaService := media.NewService(cfg, log)
 
-	// Generate script
+	// Step 1: Generate script
+	log.Info("Step 1/5: Generating script...")
 	script, err := llmService.GenerateScript(ctx, *topic)
 	if err != nil {
 		log.Error("Script generation failed: %v", err)
@@ -64,9 +66,10 @@ func main() {
 		log.Error("Failed to save script: %v", err)
 		os.Exit(1)
 	}
-	log.Success("Script saved to %s", scriptPath)
+	log.Success("Script saved (%d chars)", len(script))
 
-	// Generate narration
+	// Step 2: Generate narration
+	log.Info("Step 2/5: Synthesizing narration...")
 	narrationPath := "build/narration.wav"
 	if err := ttsService.Synthesize(ctx, script, narrationPath); err != nil {
 		log.Error("TTS synthesis failed: %v", err)
@@ -74,15 +77,22 @@ func main() {
 	}
 	log.Success("Narration synthesized")
 
-	// Create background video
+	// Step 3: Create background video
+	log.Info("Step 3/5: Creating background...")
 	backgroundPath := "build/background.mp4"
-	if err := mediaService.CreateBackground(ctx, backgroundPath, 65*time.Second); err != nil {
+	duration := 65 * time.Second
+	if *test {
+		duration = 10 * time.Second // Faster for testing
+	}
+	
+	if err := mediaService.CreateBackground(ctx, backgroundPath, duration); err != nil {
 		log.Error("Background creation failed: %v", err)
 		os.Exit(1)
 	}
-	log.Success("Background video created")
+	log.Success("Background created")
 
-	// Generate subtitles
+	// Step 4: Generate subtitles
+	log.Info("Step 4/5: Generating subtitles...")
 	subtitlesPath := "build/subtitles.srt"
 	if err := mediaService.GenerateSubtitles(narrationPath, script, subtitlesPath); err != nil {
 		log.Error("Subtitle generation failed: %v", err)
@@ -90,7 +100,8 @@ func main() {
 	}
 	log.Success("Subtitles generated")
 
-	// Prepare render configuration
+	// Step 5: Render final video
+	log.Info("Step 5/5: Rendering final video...")
 	renderCfg := media.RenderConfig{
 		VideoInputs: []string{backgroundPath},
 		Narration:   narrationPath,
@@ -117,7 +128,6 @@ func main() {
 		}
 	}
 
-	// Render final video
 	if err := mediaService.RenderVideo(ctx, renderCfg); err != nil {
 		log.Error("Video rendering failed: %v", err)
 		os.Exit(1)
